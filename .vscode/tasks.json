@@ -1,0 +1,139 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "1C РѕСЃРЅРѕРІРЅР°СЏ: Р·Р°РіСЂСѓР·РёС‚СЊ РёР· С„Р°Р№Р»РѕРІ РІ РР‘ (LoadOnly)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/Export-MainCf.ps1",
+        "-Step",
+        "LoadOnly"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "focus": true }
+    },
+    {
+      "label": "1C РѕСЃРЅРѕРІРЅР°СЏ: РІС‹РіСЂСѓР·РёС‚СЊ РІ CF (DumpOnly)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/Export-MainCf.ps1",
+        "-Step",
+        "DumpOnly"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "focus": true }
+    },
+    {
+      "label": "1C РѕСЃРЅРѕРІРЅР°СЏ: Р·Р°РіСЂСѓР·РёС‚СЊ РёР· С„Р°Р№Р»РѕРІ + РІС‹РіСЂСѓР·РёС‚СЊ CF (All)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/Export-MainCf.ps1",
+        "-Step",
+        "All"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "focus": true }
+    },
+    {
+      "label": "1C РѕСЃРЅРѕРІРЅР°СЏ: dry run (WhatIf)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/Export-MainCf.ps1",
+        "-WhatIf"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "focus": true }
+    },
+    {
+      "label": "1C СЂР°СЃС€РёСЂРµРЅРёРµ: Р·Р°РіСЂСѓР·РёС‚СЊ РёР· С„Р°Р№Р»РѕРІ РІ РР‘ (LoadOnly)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/Export-ExtensionCfe.ps1",
+        "-Step",
+        "LoadOnly"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "focus": true }
+    },
+    {
+      "label": "1C СЂР°СЃС€РёСЂРµРЅРёРµ: РІС‹РіСЂСѓР·РёС‚СЊ РІ CFE (DumpOnly)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/Export-ExtensionCfe.ps1",
+        "-Step",
+        "DumpOnly"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "focus": true }
+    },
+    {
+      "label": "1C СЂР°СЃС€РёСЂРµРЅРёРµ: Р·Р°РіСЂСѓР·РёС‚СЊ РёР· С„Р°Р№Р»РѕРІ + РІС‹РіСЂСѓР·РёС‚СЊ CFE (All)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/Export-ExtensionCfe.ps1",
+        "-Step",
+        "All"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "focus": true }
+    },
+    {
+      "label": "1C СЂР°СЃС€РёСЂРµРЅРёРµ: dry run (WhatIf)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/Export-ExtensionCfe.ps1",
+        "-WhatIf"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "focus": true }
+    }
+  ]
+}
