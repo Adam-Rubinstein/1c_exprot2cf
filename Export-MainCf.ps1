@@ -15,6 +15,9 @@
 .PARAMETER OutCfPath
     Полный путь к выходному .cf. По умолчанию — <корень репозитория>\cf\cf-export-YYYYMMDD-HHMMSS.cf.
 
+.PARAMETER SaveLog
+    Сохранять объединённый лог в %TEMP%, фрагменты по фазам и копию в build-logs. По умолчанию выключено.
+
 .PARAMETER WhatIf
     Только вывести пути и аргументы запуска, без выполнения.
 
@@ -30,6 +33,7 @@ param(
     [string] $OutCfPath = "",
     [string] $PlatformExe = "",
     [string] $LogPath = "",
+    [switch] $SaveLog,
     [switch] $WhatIf,
     [switch] $SkipUpdateDBCfg,
     [ValidateSet("All", "LoadOnly", "UpdateOnly", "DumpOnly")]
@@ -144,19 +148,24 @@ if ([string]::IsNullOrWhiteSpace($OutCfPath)) {
     $OutCfPath = Join-Path $cfDir ("cf-export-{0}.cf" -f $stamp)
 }
 
-if ([string]::IsNullOrWhiteSpace($LogPath)) {
-    $tempLong = Get-DirectoryLongPath($env:TEMP)
-    $LogPath = Join-Path $tempLong ("1c-export-main-{0}.log" -f (Get-Date -Format "yyyyMMddHHmmss"))
+if ($SaveLog) {
+    if ([string]::IsNullOrWhiteSpace($LogPath)) {
+        $tempLong = Get-DirectoryLongPath($env:TEMP)
+        $LogPath = Join-Path $tempLong ("1c-export-main-{0}.log" -f (Get-Date -Format "yyyyMMddHHmmss"))
+    }
+    $logParent = Split-Path -Parent $LogPath
+    if (-not [string]::IsNullOrWhiteSpace($logParent) -and (Test-Path -LiteralPath $logParent)) {
+        $LogPath = Join-Path (Get-DirectoryLongPath $logParent) (Split-Path -Leaf $LogPath)
+    }
+}
+else {
+    $LogPath = ""
 }
 
 $outParent = Split-Path -Parent $OutCfPath
 if (-not [string]::IsNullOrWhiteSpace($outParent)) {
     New-Item -ItemType Directory -Force -Path $outParent | Out-Null
     $OutCfPath = Join-Path (Get-DirectoryLongPath $outParent) (Split-Path -Leaf $OutCfPath)
-}
-$logParent = Split-Path -Parent $LogPath
-if (-not [string]::IsNullOrWhiteSpace($logParent) -and (Test-Path -LiteralPath $logParent)) {
-    $LogPath = Join-Path (Get-DirectoryLongPath $logParent) (Split-Path -Leaf $LogPath)
 }
 
 function Escape-1CPath([string] $p) {
@@ -214,12 +223,14 @@ function Invoke-DesignerPhase {
         [System.Collections.Generic.List[string]] $Arguments,
         [string] $FragmentLogPath
     )
-    $Arguments.Add("/Out")
-    $Arguments.Add((Escape-1CPath $FragmentLogPath))
+    $execArgs = [System.Collections.Generic.List[string]]::new()
+    foreach ($a in $Arguments) { $execArgs.Add($a) }
+    $execArgs.Add("/Out")
+    $execArgs.Add((Escape-1CPath $FragmentLogPath))
     Write-Host ""
     Write-Host "---- $Title ----"
-    Write-Host ($Arguments -join " ")
-    $p = Start-Process -FilePath $PlatformExe -ArgumentList $Arguments -Wait -PassThru -NoNewWindow
+    Write-Host ($execArgs -join " ")
+    $p = Start-Process -FilePath $PlatformExe -ArgumentList $execArgs -Wait -PassThru -NoNewWindow
     if ($null -eq $p) {
         throw "Start-Process returned null (Designer did not start?). PlatformExe=$PlatformExe"
     }
@@ -260,7 +271,7 @@ function Invoke-DumpPhase {
         return 0
     }
     if ($code2 -eq 0) {
-        Write-Warning ".cf still missing or too small after /DumpDBCfg. Check merged log and 03-dump*.log fragments."
+        Write-Warning ".cf still missing or too small after /DumpDBCfg. При необходимости повторите с -SaveLog."
         return 1
     }
     return $code2
@@ -300,6 +311,80 @@ function Copy-ExportLogToRepo([string] $sourceLogPath) {
     }
 }
 
+function Write-CloseDesignerWarning {
+    Write-Host ""
+    Write-Host "----------------------------------------------------------------" -ForegroundColor Yellow
+    Write-Host "  IMPORTANT: close ALL 1C Designer windows for this file infobase." -ForegroundColor Yellow
+    Write-Host "  If Designer is open on the same IB, batch mode often hangs or fails (no .cf)." -ForegroundColor Yellow
+    Write-Host ("  Infobase folder: " + $InfoBasePath) -ForegroundColor Yellow
+    Write-Host "----------------------------------------------------------------" -ForegroundColor Yellow
+    Write-Host ""
+}
+
+function Get-DbcfgOutPath([string] $fragmentLogPath) {
+    $dir = Split-Path -Parent $fragmentLogPath
+    $base = [IO.Path]::GetFileNameWithoutExtension($fragmentLogPath)
+    return (Join-Path $dir ($base + "-dbcfg.log"))
+}
+
+function Remove-DesignerOutFiles([string[]] $fragmentPaths) {
+    foreach ($p in $fragmentPaths) {
+        if ([string]::IsNullOrWhiteSpace($p)) { continue }
+        if (Test-Path -LiteralPath $p) {
+            Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+        }
+        $dbc = Get-DbcfgOutPath $p
+        if (Test-Path -LiteralPath $dbc) {
+            Remove-Item -LiteralPath $dbc -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Finish-Run([string[]] $fragments, [int] $exitCode, [string] $message, [string] $SuccessNote = "") {
+    if ($SaveLog) {
+        Merge-FragmentLogs -destPath $LogPath -fragmentPaths $fragments
+        Copy-ExportLogToRepo -sourceLogPath $LogPath
+        if ($exitCode -ne 0) {
+            if (-not [string]::IsNullOrWhiteSpace($message)) {
+                Write-Warning $message
+            }
+            Get-Content -LiteralPath $LogPath -Encoding UTF8 -ErrorAction SilentlyContinue | Select-Object -Last 160 | Write-Host
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($SuccessNote)) {
+            Write-Host $SuccessNote
+        }
+        Write-Host "Log: $LogPath"
+    }
+    else {
+        $pathsForTail = [System.Collections.Generic.List[string]]::new()
+        foreach ($fp in $fragments) {
+            if ([string]::IsNullOrWhiteSpace($fp)) { continue }
+            if (-not $pathsForTail.Contains($fp)) { [void]$pathsForTail.Add($fp) }
+            $dbc = Get-DbcfgOutPath $fp
+            if ((Test-Path -LiteralPath $dbc) -and -not $pathsForTail.Contains($dbc)) { [void]$pathsForTail.Add($dbc) }
+        }
+        if ($exitCode -ne 0) {
+            if (-not [string]::IsNullOrWhiteSpace($message)) {
+                Write-Warning $message
+            }
+            Write-Warning "Close 1C Designer for this IB if it was open, then retry. For full logs on disk use -SaveLog."
+            foreach ($tp in $pathsForTail) {
+                if (Test-Path -LiteralPath $tp) {
+                    Write-Host "--- tail: $(Split-Path -Leaf $tp) ---"
+                    Get-Content -LiteralPath $tp -Encoding UTF8 -ErrorAction SilentlyContinue | Select-Object -Last 120 | Write-Host
+                }
+            }
+        }
+        else {
+            if (-not [string]::IsNullOrWhiteSpace($SuccessNote)) {
+                Write-Host $SuccessNote
+            }
+        }
+        Remove-DesignerOutFiles -fragmentPaths $fragments
+    }
+    exit $exitCode
+}
+
 $argsLoad = New-BaseDesignerArgs
 $argsLoad.Add("/LoadConfigFromFiles")
 $argsLoad.Add((Escape-1CPath $ConfigFilesPath))
@@ -314,7 +399,12 @@ Write-Host "Infobase:   $InfoBasePath"
 Write-Host "Config XML: $ConfigFilesPath"
 if ($configName) { Write-Host "Config name (from XML): $configName" }
 Write-Host "Output CF:  $OutCfPath"
-Write-Host "Log:        $LogPath"
+if ($SaveLog) {
+    Write-Host "Log:        $LogPath"
+}
+else {
+    Write-Host "Log:        off (add -SaveLog to write merged log files)"
+}
 Write-Host "Step:       $Step"
 Write-Host ""
 
@@ -326,7 +416,7 @@ if ($WhatIf) {
     Write-Host "================================================================" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "NOTE: In -WhatIf mode no log files are created (paths above are planned only)."
-    Write-Host "(WhatIf) Planned phases:"
+    Write-Host "WhatIf: planned phases:"
     if ($Step -eq "All") {
         Write-Host "1)" ($argsLoad -join " ")
         if (-not $SkipUpdateDBCfg) {
@@ -344,23 +434,25 @@ if ($WhatIf) {
         Write-Host "1)" ((New-DumpCfgDesignerArgs) -join " ")
     }
     Write-Host ""
-    Write-Host "(WhatIf) Designer was not started."
+    Write-Host "WhatIf: Designer was not started."
     exit 0
 }
 
 Write-Host "Real export: Designer will run; on success the .cf will be written to the path above." -ForegroundColor Green
 Write-Host ""
 
-$runId = Get-Date -Format "yyyyMMddHHmmssfff"
-$fragDir = Join-Path (Split-Path -Parent $LogPath) ("1c-export-main-fragments-" + $runId)
-New-Item -ItemType Directory -Force -Path $fragDir | Out-Null
-$logLoad = Join-Path $fragDir "01-load.log"
-$logUpdate = Join-Path $fragDir "02-update.log"
-$logDump = Join-Path $fragDir "03-dump.log"
-Write-Host "Fragments:  $fragDir"
-Write-Host ""
+Write-CloseDesignerWarning
 
-$logHeader = @"
+$runId = Get-Date -Format "yyyyMMddHHmmssfff"
+if ($SaveLog) {
+    $fragDir = Join-Path (Split-Path -Parent $LogPath) ("1c-export-main-fragments-" + $runId)
+    New-Item -ItemType Directory -Force -Path $fragDir | Out-Null
+    $logLoad = Join-Path $fragDir "01-load.log"
+    $logUpdate = Join-Path $fragDir "02-update.log"
+    $logDump = Join-Path $fragDir "03-dump.log"
+    Write-Host "Fragments:  $fragDir"
+    Write-Host ""
+    $logHeader = @"
 ==== 1C main configuration export session started ====
 Time (local): $(Get-Date -Format "o")
 Platform: $PlatformExe
@@ -369,74 +461,80 @@ Config files: $ConfigFilesPath
 Step: $Step
 Fragment logs directory: $fragDir
 "@
-[IO.File]::WriteAllText($LogPath, $logHeader.TrimEnd() + [Environment]::NewLine + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
-Write-Host "Started writing log file: $LogPath"
-
-function Finish-WithMergedLog([string[]] $fragments, [int] $exitCode, [string] $message, [string] $SuccessNote = "") {
-    Merge-FragmentLogs -destPath $LogPath -fragmentPaths $fragments
-    Copy-ExportLogToRepo -sourceLogPath $LogPath
-    if ($exitCode -ne 0) {
-        if (-not [string]::IsNullOrWhiteSpace($message)) {
-            Write-Warning $message
-        }
-        Get-Content -LiteralPath $LogPath -Encoding UTF8 -ErrorAction SilentlyContinue | Select-Object -Last 160 | Write-Host
-    }
-    elseif (-not [string]::IsNullOrWhiteSpace($SuccessNote)) {
-        Write-Host $SuccessNote
-    }
-    Write-Host "Log: $LogPath"
-    exit $exitCode
+    [IO.File]::WriteAllText($LogPath, $logHeader.TrimEnd() + [Environment]::NewLine + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+    Write-Host "Started writing log file: $LogPath"
+}
+else {
+    $tid = [Guid]::NewGuid().ToString("N")
+    $logLoad = Join-Path $env:TEMP ("1c-main-$tid-01.log")
+    $logUpdate = Join-Path $env:TEMP ("1c-main-$tid-02.log")
+    $logDump = Join-Path $env:TEMP ("1c-main-$tid-03.log")
 }
 
 if ($Step -eq "LoadOnly") {
     $code = Invoke-LoadPhase -FragmentLogPath $logLoad
     if ($code -ne 0) {
-        Finish-WithMergedLog -fragments @($logLoad) -exitCode $code -message "Designer failed on LOAD (exit $code). See: $LogPath"
+        Finish-Run -fragments @($logLoad) -exitCode $code -message "Designer failed on LOAD (exit $code)."
     }
-    Finish-WithMergedLog -fragments @($logLoad) -exitCode 0 -message "" -SuccessNote "LoadOnly: OK. Next run -Step All or UpdateOnly/DumpOnly."
+    Finish-Run -fragments @($logLoad) -exitCode 0 -message "" -SuccessNote "LoadOnly: OK. Next run -Step All or UpdateOnly/DumpOnly."
 }
 
 if ($Step -eq "UpdateOnly") {
     $code = Invoke-UpdatePhase -FragmentLogPath $logUpdate
     if ($code -ne 0) {
-        Finish-WithMergedLog -fragments @($logUpdate) -exitCode $code -message "Designer failed on UPDATE (exit $code). See: $LogPath"
+        Finish-Run -fragments @($logUpdate) -exitCode $code -message "Designer failed on UPDATE (exit $code)."
     }
-    Finish-WithMergedLog -fragments @($logUpdate) -exitCode 0 -message "" -SuccessNote "UpdateOnly: OK."
+    Finish-Run -fragments @($logUpdate) -exitCode 0 -message "" -SuccessNote "UpdateOnly: OK."
 }
 
 if ($Step -eq "DumpOnly") {
     $code = Invoke-DumpPhase -FragmentLogPath $logDump
     if ($code -ne 0) {
-        Finish-WithMergedLog -fragments @($logDump) -exitCode $code -message "Designer failed on DUMP (exit $code). See: $LogPath"
+        Finish-Run -fragments @($logDump) -exitCode $code -message "Designer failed on DUMP (exit $code)."
     }
-    Finish-WithMergedLog -fragments @($logDump) -exitCode 0 -message "" -SuccessNote ("DumpOnly: OK. CF: " + $OutCfPath)
+    Finish-Run -fragments @($logDump) -exitCode 0 -message "" -SuccessNote ("DumpOnly: OK. CF: " + $OutCfPath)
 }
 
 $code = Invoke-LoadPhase -FragmentLogPath $logLoad
 if ($code -ne 0) {
-    Finish-WithMergedLog -fragments @($logLoad) -exitCode $code -message "Designer failed on LOAD (exit $code). See: $LogPath"
+    Finish-Run -fragments @($logLoad) -exitCode $code -message "Designer failed on LOAD (exit $code)."
 }
 
 if (-not $SkipUpdateDBCfg) {
     $code = Invoke-UpdatePhase -FragmentLogPath $logUpdate
     if ($code -ne 0) {
-        Finish-WithMergedLog -fragments @($logLoad, $logUpdate) -exitCode $code -message "Designer failed on UPDATE (exit $code). See: $LogPath"
+        Finish-Run -fragments @($logLoad, $logUpdate) -exitCode $code -message "Designer failed on UPDATE (exit $code)."
     }
 }
 
 $code = Invoke-DumpPhase -FragmentLogPath $logDump
 if ($code -ne 0) {
     if ($SkipUpdateDBCfg) {
-        Finish-WithMergedLog -fragments @($logLoad, $logDump) -exitCode $code -message "Designer failed on DUMP (exit $code). See: $LogPath"
+        Finish-Run -fragments @($logLoad, $logDump) -exitCode $code -message "Designer failed on DUMP (exit $code)."
     }
     else {
-        Finish-WithMergedLog -fragments @($logLoad, $logUpdate, $logDump) -exitCode $code -message "Designer failed on DUMP (exit $code). See: $LogPath"
+        Finish-Run -fragments @($logLoad, $logUpdate, $logDump) -exitCode $code -message "Designer failed on DUMP (exit $code)."
     }
 }
 
+if (-not (Test-ExportedCfLooksValid $OutCfPath)) {
+    $msg = "Export finished but .cf is missing or too small: $OutCfPath (close Designer for this IB and retry; try -SaveLog)."
+    if ($SkipUpdateDBCfg) {
+        Finish-Run -fragments @($logLoad, $logDump) -exitCode 1 -message $msg
+    }
+    else {
+        Finish-Run -fragments @($logLoad, $logUpdate, $logDump) -exitCode 1 -message $msg
+    }
+}
+
+Write-Host ""
+Write-Host "Output .cf file (repo subfolder cf by default):" -ForegroundColor Green
+Write-Host $OutCfPath -ForegroundColor Green
+Write-Host ""
+
 if ($SkipUpdateDBCfg) {
-    Finish-WithMergedLog -fragments @($logLoad, $logDump) -exitCode 0 -message "" -SuccessNote ("Done. CF: " + $OutCfPath)
+    Finish-Run -fragments @($logLoad, $logDump) -exitCode 0 -message "" -SuccessNote ("Done. CF: " + $OutCfPath)
 }
 else {
-    Finish-WithMergedLog -fragments @($logLoad, $logUpdate, $logDump) -exitCode 0 -message "" -SuccessNote ("Done. CF: " + $OutCfPath)
+    Finish-Run -fragments @($logLoad, $logUpdate, $logDump) -exitCode 0 -message "" -SuccessNote ("Done. CF: " + $OutCfPath)
 }

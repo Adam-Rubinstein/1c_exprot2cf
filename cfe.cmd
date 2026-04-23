@@ -8,4 +8,9 @@ if "%~1"=="" (
 ) else (
   powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Export-ExtensionCfe.ps1" %*
 )
+if errorlevel 1 (
+  echo.
+  echo Export failed, ERRORLEVEL=%ERRORLEVEL%. See messages above.
+  pause
+)
 exit /b %ERRORLEVEL%
